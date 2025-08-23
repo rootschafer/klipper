@@ -16,6 +16,7 @@ AMBIENT_TEMP = 25.
 PID_PARAM_BASE = 255.
 MAX_MAINTHREAD_TIME = 5.0
 QUELL_STALE_TIME = 7.0
+PWM_SAFETY_MARGIN = 0.100
 
 class Heater:
     def __init__(self, config, sensor):
@@ -74,7 +75,9 @@ class Heater:
             and abs(value - self.last_pwm_value) < 0.05):
             # No significant change in value - can suppress update
             return
-        pwm_time = read_time + self.pwm_delay
+        # Add a small safety margin so the PWM update is never scheduled
+        # too close to the current time on slower hosts/VMs.
+        pwm_time = read_time + self.pwm_delay + PWM_SAFETY_MARGIN
         self.next_pwm_time = (pwm_time + MAX_HEAT_TIME
                               - (3. * self.pwm_delay + 0.001))
         self.last_pwm_value = value
@@ -386,4 +389,22 @@ class PrinterHeaters:
             eventtime = reactor.pause(eventtime + 1.)
 
 def load_config(config):
-    return PrinterHeaters(config)
+    # Standard printer heaters initialization
+    heaters_instance = PrinterHeaters(config)
+    # Register factory to allow heaters to reference an existing
+    # [temperature_sensor X] via: sensor_type: temperature_sensor, sensor_pin: X
+    def _temp_sensor_factory(heater_cfg):
+        printer = heaters_instance.printer
+        sensor_name = heater_cfg.get('sensor_pin')
+        # Try short name first
+        try:
+            obj = printer.lookup_object(sensor_name)
+        except Exception:
+            # Fallback to full section name
+            obj = printer.lookup_object('temperature_sensor ' + sensor_name)
+        # If wrapper object present, return its underlying sensor
+        if hasattr(obj, 'sensor') and hasattr(obj, 'get_temp'):
+            return getattr(obj, 'sensor', obj)
+        return obj
+    heaters_instance.add_sensor_factory('temperature_sensor', _temp_sensor_factory)
+    return heaters_instance

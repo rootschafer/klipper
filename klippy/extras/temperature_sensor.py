@@ -40,3 +40,32 @@ class PrinterSensorGeneric:
 
 def load_config_prefix(config):
     return PrinterSensorGeneric(config)
+
+
+# Register a factory so heaters can use an existing [temperature_sensor X]
+# via: sensor_type: temperature_sensor, sensor_pin: X
+def load_config(config):
+    printer = config.get_printer()
+    pheaters = printer.load_object(config, 'heaters')
+
+    def _factory(heater_cfg):
+        sensor_name = heater_cfg.get('sensor_pin')
+        # Try short and full section names
+        try:
+            obj = printer.lookup_object(sensor_name)
+            # If wrapper, return its underlying sensor
+            if hasattr(obj, 'sensor') and hasattr(obj, 'get_temp'):
+                return getattr(obj, 'sensor', obj)
+            return obj
+        except Exception:
+            try:
+                obj = printer.lookup_object(
+                    'temperature_sensor ' + sensor_name)
+                if hasattr(obj, 'sensor') and hasattr(obj, 'get_temp'):
+                    return getattr(obj, 'sensor', obj)
+                return obj
+            except Exception as e:
+                raise heater_cfg.error(
+                    f"Unknown config object '{sensor_name}'")
+
+    pheaters.add_sensor_factory('temperature_sensor', _factory)
