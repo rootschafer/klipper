@@ -119,7 +119,7 @@ class VirtualExtruder:
         }
 
     def get_pwm(self):
-        # Expose current PWM power for external consumers (e.g., virtual thermistor)
+        # Expose current PWM power for external consumers
         try:
             return float(getattr(self.heater, 'pwm_value', 0.0))
         except Exception:

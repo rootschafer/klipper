@@ -36,8 +36,11 @@ class VirtualThermistor:
         self.watts = config.getfloat('watts', 40.0)
         self.tau = max(0.1, config.getfloat('tau', 15.0))
         self.noise = max(0.0, config.getfloat('noise', 0.0))
-        self.sample_rate = max(1.0, config.getfloat('sample_rate', 10.0))
-        self.heater_name = config.get('heater', None)  # optional: "extruder" or "heater_bed"
+        self.sample_rate = max(0.5, config.getfloat('sample_rate', 10.0))
+        # optional: link to a heater by name (e.g., "extruder",
+        # "heater_bed"). If set, the thermistor will read that
+        # heater's power to drive the temperature model.
+        self.heater_name = config.get('heater', None)
 
         # State variables
         self.temp = self.ambient
@@ -82,17 +85,23 @@ class VirtualThermistor:
         # Link to heater if specified
         if self.heater_name:
             try:
-                # Look up the real heater via the heaters registry so names
-                # like 'extruder' / 'heater_bed' resolve to Heater instances
+                # Look up via heaters registry so names like 'extruder' /
+                # 'heater_bed' resolve to Heater instances.
                 pheaters = self.printer.lookup_object('heaters')
                 self._heater = pheaters.lookup_heater(self.heater_name)
             except Exception:
                 self._heater = None
+        # Cache MCU reference to avoid per-tick lookup
+        try:
+            self._mcu = self.printer.lookup_object('mcu')
+        except Exception:
+            self._mcu = None
 
         # Start periodic updates
         self._last_t = self.reactor.monotonic()
         period = 1.0 / self.sample_rate
-        self._timer = self.reactor.register_timer(self._update, self._last_t + period)
+        self._timer = self.reactor.register_timer(
+            self._update, self._last_t + period)
 
     def _update(self, eventtime):
         """Update temperature simulation."""
@@ -128,9 +137,9 @@ class VirtualThermistor:
             self.temp += (random.random() * 2.0 - 1.0) * self.noise
 
         # Call temperature callback if set
-        if self._callback is not None:
-            mcu = self.printer.lookup_object('mcu')
-            self._callback(mcu.estimated_print_time(eventtime), self.temp)
+        if self._callback is not None and self._mcu is not None:
+            self._callback(
+                self._mcu.estimated_print_time(eventtime), self.temp)
 
         # Schedule next update
         return eventtime + (1.0 / self.sample_rate)
